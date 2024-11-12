@@ -1,0 +1,9 @@
+numpy
+pandas
+torch
+torch-geometric
+networkx
+matplotlib
+seaborn
+scikit-learn
+ucimlrepo
