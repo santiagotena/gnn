@@ -104,12 +104,10 @@ class SplitData():
                                                    test_size=self.parameters['split_data']['val_size'],
                                                    random_state=self.random_seed)
 
-    # Convert the indices to torch tensors
     self.train_mask = torch.tensor(self.train_idx, dtype=torch.long).to(self.device)
     self.val_mask = torch.tensor(self.val_idx, dtype=torch.long).to(self.device)
     self.test_mask = torch.tensor(self.test_idx, dtype=torch.long).to(self.device)
 
-    # Update the self.graph object with train, val, and test masks
     self.graph_data.train_mask = torch.zeros(self.graph_data.num_nodes, dtype=torch.bool).to(self.device)
     self.graph_data.train_mask[self.train_mask] = True
 
