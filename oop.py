@@ -265,86 +265,97 @@ class GraphEvaluator():
     sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
     plt.xlabel("Predicted")
     plt.ylabel("True")
+    plt.title("GNN Confusion Matrix")
     plt.show()
 
-class XGBoostTrainer():
-  def __init__(self, parameters, pipeline_registry, dataset_name):
-    self.parameters = parameters
-    self.pipeline_registry = pipeline_registry
-    self.dataset_name = dataset_name
-
-    self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
-    self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
-    self.train_idx = pipeline_registry[dataset_name]['data_processor'].train_idx
-    self.val_idx = pipeline_registry[dataset_name]['data_processor'].val_idx
-    self.test_idx = pipeline_registry[dataset_name]['data_processor'].test_idx
-
-  def run(self):
-    X_train = self.X_prepared.iloc[self.train_idx]
-    y_train = self.y_encoded.iloc[self.train_idx].values.ravel()
-    X_val = self.X_prepared.iloc[self.val_idx]
-    y_val = self.y_encoded.iloc[self.val_idx].values.ravel()
-    X_test = self.X_prepared.iloc[self.test_idx]
-    y_test = self.y_encoded.iloc[self.test_idx].values.ravel()
-
-    xgb_params = {
-        'objective': 'multi:softmax',
-        'num_class': len(self.y_encoded['target'].unique()),
-        'learning_rate': 0.1,
-        'max_depth': 6,
-        'n_estimators': 100,
-    }
-
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dval = xgb.DMatrix(X_val, label=y_val)
-
-    model = xgb.train(xgb_params, dtrain, 
-                      evals=[(dval, 'eval')], 
-                      early_stopping_rounds=10, 
-                      verbose_eval=True)
-
-    dtest = xgb.DMatrix(X_test)
-    y_pred = model.predict(dtest)
-
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f"XGBoost Test Accuracy: {accuracy:.4f}")
-
-    print(classification_report(y_test, y_pred))
-
-    cm = confusion_matrix(y_test, y_pred)
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
-    plt.title("XGBoost Confusion Matrix")
-    plt.show()
-
-    return model
-  
-class XGBoostEvaluator():
+class XGBoostTrainer:
     def __init__(self, parameters, pipeline_registry, dataset_name):
         self.parameters = parameters
         self.pipeline_registry = pipeline_registry
         self.dataset_name = dataset_name
+        self.device = parameters['device']
+        
+        self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
+        self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
+        self.train_idx = pipeline_registry[dataset_name]['data_processor'].train_idx
+        self.val_idx = pipeline_registry[dataset_name]['data_processor'].val_idx
 
-        self.model = pipeline_registry[dataset_name]['xgboost_trainer']
+        self.X_train = self.X_prepared.iloc[self.train_idx].values
+        self.y_train = self.y_encoded.iloc[self.train_idx].values.ravel()
+        self.X_val = self.X_prepared.iloc[self.val_idx].values
+        self.y_val = self.y_encoded.iloc[self.val_idx].values.ravel()
+
+        self.best_val_acc = 0
+        self.best_model = None
+
+    def train(self, model, X_train, y_train, params):
+        model = xgb.XGBClassifier(**params)
+        model.fit(X_train, y_train)
+        return model
+
+    def validate(self, model, X_val, y_val):
+        y_pred = model.predict(X_val)
+        accuracy = accuracy_score(y_val, y_pred)
+        return accuracy
+
+    def run(self):
+        param_grid = self.parameters['xgboost_trainer']['hyperparameters']
+        
+        best_accuracy = 0
+        best_params = None
+        best_model = None
+        
+        for params in itertools.product(*param_grid.values()):
+            current_params = dict(zip(param_grid.keys(), params))
+            print(f"Training XGBoost with params: {current_params}")
+            
+            model = self.train(model=None, X_train=self.X_train, y_train=self.y_train, params=current_params)
+            
+            val_acc = self.validate(model, self.X_val, self.y_val)
+            print(f"Validation Accuracy: {val_acc:.4f}")
+            
+            if val_acc > best_accuracy:
+                best_accuracy = val_acc
+                best_params = current_params
+                best_model = model
+        
+        self.best_val_acc = best_accuracy
+        self.best_model = best_model
+        
+        print(f"Best validation accuracy: {self.best_val_acc:.4f}")
+        print(f"Best Hyperparameters: {best_params}")
+        
+        return best_model
+
+
+class XGBoostEvaluator:
+    def __init__(self, parameters, pipeline_registry, dataset_name):
+        self.parameters = parameters
+        self.pipeline_registry = pipeline_registry
+        self.dataset_name = dataset_name
+        self.device = parameters['device']
 
         self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
         self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
         self.test_idx = pipeline_registry[dataset_name]['data_processor'].test_idx
 
+        self.X_test = self.X_prepared.iloc[self.test_idx].values
+        self.y_test = self.y_encoded.iloc[self.test_idx].values.ravel()
+
+        self.model = pipeline_registry[dataset_name]['xgboost_trainer']
+
     def run(self):
-        X_test = self.X_prepared.iloc[self.test_idx]
-        y_test = self.y_encoded.iloc[self.test_idx].values.ravel()
-        dtest = xgb.DMatrix(X_test)  
-        y_pred = self.model.predict(dtest)
+        """
+        Evaluate the best XGBoost model on the test set.
+        """
+        y_pred = self.model.predict(self.X_test)
+        test_accuracy = accuracy_score(self.y_test, y_pred)
 
-        test_accuracy = accuracy_score(y_test, y_pred)
-        print(f"Test accuracy: {test_accuracy:.4f}")
-
+        print(f"XGBoost Test Accuracy: {test_accuracy:.4f}")
         print("Classification Report:")
-        print(classification_report(y_test, y_pred))
+        print(classification_report(self.y_test, y_pred))
 
-        cm = confusion_matrix(y_test, y_pred)
+        cm = confusion_matrix(self.y_test, y_pred)
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
         plt.xlabel("Predicted")
         plt.ylabel("True")
@@ -352,6 +363,130 @@ class XGBoostEvaluator():
         plt.show()
 
         return test_accuracy
+    
+class MLP(torch.nn.Module):
+    def __init__(self, input_dim, hidden_dim, num_classes, num_hidden_layers):
+        super(MLP, self).__init__()
+        self.num_hidden_layers = num_hidden_layers
+        self.layers = torch.nn.ModuleList()
+
+        self.layers.append(torch.nn.Linear(input_dim, hidden_dim))
+        for _ in range(num_hidden_layers - 1):
+            self.layers.append(torch.nn.Linear(hidden_dim, hidden_dim))
+        self.layers.append(torch.nn.Linear(hidden_dim, num_classes))
+
+    def forward(self, x):
+        for i in range(self.num_hidden_layers):
+            x = F.relu(self.layers[i](x))
+        x = self.layers[-1](x)
+        return F.log_softmax(x, dim=1)
+
+class MLPTrainer():
+    def __init__(self, parameters, pipeline_registry, dataset_name):
+        self.parameters = parameters
+        self.pipeline_registry = pipeline_registry
+        self.dataset_name = dataset_name
+        self.device = parameters['device']
+
+        self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
+        self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
+        self.train_idx = pipeline_registry[dataset_name]['data_processor'].train_idx
+        self.val_idx = pipeline_registry[dataset_name]['data_processor'].val_idx
+
+        self.X_train = torch.tensor(self.X_prepared.iloc[self.train_idx].values, dtype=torch.float32).to(self.device)
+        self.y_train = torch.tensor(self.y_encoded.iloc[self.train_idx].values.ravel(), dtype=torch.long).to(self.device)
+        self.X_val = torch.tensor(self.X_prepared.iloc[self.val_idx].values, dtype=torch.float32).to(self.device)
+        self.y_val = torch.tensor(self.y_encoded.iloc[self.val_idx].values.ravel(), dtype=torch.long).to(self.device)
+
+        self.best_val_acc = 0
+        self.best_model_state = None
+
+    def train(self, model, optimizer, criterion):
+        model.train()
+        optimizer.zero_grad()
+        out = model(self.X_train)
+        loss = criterion(out, self.y_train)
+        loss.backward()
+        optimizer.step()
+        return loss
+
+    def validate(self, model, criterion):
+        model.eval()
+        with torch.no_grad():
+            out = model(self.X_val)
+            val_loss = criterion(out, self.y_val)
+            pred = out.max(1)[1]
+            correct = pred.eq(self.y_val).sum().item()
+            accuracy = correct / len(self.y_val)
+        return val_loss, accuracy
+
+    def run(self):
+        input_dim = self.X_prepared.shape[1]
+        num_classes = self.y_encoded['target'].nunique()
+
+        for hidden_dim, num_hidden_layers, lr, weight_decay in itertools.product(
+            self.parameters['mlp_trainer']['architecture']['hidden_dim'],
+            self.parameters['mlp_trainer']['architecture']['num_hidden_layers'],
+            self.parameters['mlp_trainer']['training']['lr_grid'],
+            self.parameters['mlp_trainer']['training']['weight_decay_grid']
+        ):
+            print(f"Training MLP with hidden_dim={hidden_dim}, num_hidden_layers={num_hidden_layers}, lr={lr}, weight_decay={weight_decay}")
+
+            model = MLP(input_dim, hidden_dim, num_classes, num_hidden_layers).to(self.device)
+            optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+            criterion = torch.nn.CrossEntropyLoss()
+
+            for epoch in range(self.parameters['mlp_trainer']['training']['epochs']):
+                loss = self.train(model, optimizer, criterion)
+                if epoch % 10 == 0:
+                    val_loss, val_acc = self.validate(model, criterion)
+                    print(f"Epoch {epoch}, Train Loss: {loss.item():.4f}, Val Loss: {val_loss.item():.4f}, Val Accuracy: {val_acc:.4f}")
+
+                _, val_acc = self.validate(model, criterion)
+                if val_acc > self.best_val_acc:
+                    self.best_val_acc = val_acc
+                    self.best_model_state = model.state_dict()
+
+        print(f"Best validation accuracy: {self.best_val_acc:.4f}")
+        return model
+
+class MLPEvaluator():
+    def __init__(self, parameters, pipeline_registry, dataset_name):
+        self.parameters = parameters
+        self.pipeline_registry = pipeline_registry
+        self.dataset_name = dataset_name
+        self.device = parameters['device']
+
+        self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
+        self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
+        self.test_idx = pipeline_registry[dataset_name]['data_processor'].test_idx
+
+        self.X_test = torch.tensor(self.X_prepared.iloc[self.test_idx].values, dtype=torch.float32).to(self.device)
+        self.y_test = torch.tensor(self.y_encoded.iloc[self.test_idx].values.ravel(), dtype=torch.long).to(self.device)
+
+        self.model = pipeline_registry[dataset_name]['mlp_trainer']
+
+    def run(self):
+        self.model.eval()
+        with torch.no_grad():
+            out = self.model(self.X_test)
+            pred = out.max(1)[1]
+            correct = pred.eq(self.y_test).sum().item()
+            test_accuracy = correct / len(self.y_test)
+
+        print(f"MLP Test Accuracy: {test_accuracy:.4f}")
+        print("Classification Report:")
+        print(classification_report(self.y_test.cpu(), pred.cpu()))
+
+        cm = confusion_matrix(self.y_test.cpu(), pred.cpu())
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues")
+        plt.xlabel("Predicted")
+        plt.ylabel("True")
+        plt.title("MLP Confusion Matrix")
+        plt.show()
+
+        return test_accuracy
+
 
 def build_parameters():
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -399,6 +534,35 @@ def build_parameters():
   graph_evaluator = {
               'epochs': 200,
               }
+  
+  xgboost_trainer = {
+              'hyperparameters': {
+                  'learning_rate': [0.1],
+                  'max_depth': [5, 7],
+                  'n_estimators': [100],
+                  # 'subsample': [0.8, 1.0],
+                  # 'colsample_bytree': [0.8, 1.0],
+                  # 'gamma': [0, 0.1],
+                  # 'reg_alpha': [0, 0.1],
+                  # 'reg_lambda': [1, 1.5],
+              },
+              'training': {
+                  'epochs': 100,
+                  'early_stopping_rounds': 10,
+              }
+          }
+  
+  mlp_trainer = {
+        'architecture': {
+            'hidden_dim': [16, 32],
+            'num_hidden_layers': [1, 2],
+        },
+        'training': {
+            'epochs': 100,
+            'lr_grid': [0.01, 0.001],
+            'weight_decay_grid': [0, 5e-4],
+        },
+    }
 
   return {
           'device': device,
@@ -408,6 +572,8 @@ def build_parameters():
           'data_splitter': data_splitter,
           'graph_trainer': graph_trainer,
           'graph_evaluator': graph_evaluator,
+          'xgboost_trainer': xgboost_trainer,
+          'mlp_trainer': mlp_trainer,
           }
 
 def build_pipeline_registry(dataset_names):
@@ -433,5 +599,7 @@ def main():
         pipeline_registry[dataset_name]['graph_evaluator'] = GraphEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
         pipeline_registry[dataset_name]['xgboost_trainer'] = XGBoostTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
         pipeline_registry[dataset_name]['xgboost_evaluator'] = XGBoostEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        pipeline_registry[dataset_name]['mlp_trainer'] = MLPTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        pipeline_registry[dataset_name]['mlp_evaluator'] = MLPEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
 
 main()
