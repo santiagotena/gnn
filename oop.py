@@ -115,7 +115,7 @@ class Graph():
     self.pipeline_registry = pipeline_registry
     self.device = parameters['device']
 
-    self.adj_matrix = kneighbors_graph(pipeline_registry[dataset_name]['data_processor'].X_prepared,
+    self.adj_matrix = kneighbors_graph(pipeline_registry[dataset_name]['data_processor'].X_numeric_scaled,
                                        n_neighbors=parameters['graph']['knn']['k'],
                                        mode='connectivity',
                                        include_self=False)
