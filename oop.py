@@ -128,6 +128,39 @@ class Graph():
     self.graph_data.test_mask = self.pipeline_registry[dataset_name]['data_processor'].test_mask
     self.graph_data = self.graph_data.to(self.device)
 
+class CategoricalFeatureGraph():
+    def __init__(self, parameters, pipeline_registry, dataset_name):
+        self.parameters = parameters
+        self.pipeline_registry = pipeline_registry
+        self.device = parameters['device']
+        self.dataset_name = dataset_name
+        self.X = self.pipeline_registry[dataset_name]['data_processor'].X_prepared
+        self.X_categorical_features = self.pipeline_registry[dataset_name]['data_processor'].X_categorical_features
+        self.create_graph()
+
+    def create_graph(self):
+        self.G = nx.Graph()
+        self.G.add_nodes_from(range(self.X.shape[0]))
+
+        for i in range(self.X.shape[0]):
+            for j in range(i + 1, self.X.shape[0]):
+                if self.have_identical_categorical_features(i, j):
+                    self.G.add_edge(i, j)
+
+        self.graph_data = from_networkx(self.G)
+        self.graph_data.x = torch.tensor(self.X.values.astype(np.float32), dtype=torch.float).to(self.device)
+        self.graph_data.y = self.pipeline_registry[self.dataset_name]['data_processor'].y_tensor
+        self.graph_data.train_mask = self.pipeline_registry[self.dataset_name]['data_processor'].train_mask
+        self.graph_data.val_mask = self.pipeline_registry[self.dataset_name]['data_processor'].val_mask
+        self.graph_data.test_mask = self.pipeline_registry[self.dataset_name]['data_processor'].test_mask
+        self.graph_data = self.graph_data.to(self.device)
+
+    def have_identical_categorical_features(self, i, j):
+        categorical_i = self.X_categorical_features.iloc[i]
+        categorical_j = self.X_categorical_features.iloc[j]
+
+        return categorical_i.equals(categorical_j)
+
 class GCN(torch.nn.Module):
     def __init__(self, num_node_features, hidden_dim, num_classes, num_hidden_layers):
         super(GCN, self).__init__()
@@ -274,7 +307,7 @@ class XGBoostTrainer:
         self.pipeline_registry = pipeline_registry
         self.dataset_name = dataset_name
         self.device = parameters['device']
-        
+
         self.X_prepared = pipeline_registry[dataset_name]['data_processor'].X_prepared
         self.y_encoded = pipeline_registry[dataset_name]['data_processor'].y_encoded
         self.train_idx = pipeline_registry[dataset_name]['data_processor'].train_idx
@@ -300,31 +333,31 @@ class XGBoostTrainer:
 
     def run(self):
         param_grid = self.parameters['xgboost_trainer']['hyperparameters']
-        
+
         best_accuracy = 0
         best_params = None
         best_model = None
-        
+
         for params in itertools.product(*param_grid.values()):
             current_params = dict(zip(param_grid.keys(), params))
             print(f"Training XGBoost with params: {current_params}")
-            
+
             model = self.train(model=None, X_train=self.X_train, y_train=self.y_train, params=current_params)
-            
+
             val_acc = self.validate(model, self.X_val, self.y_val)
             print(f"Validation Accuracy: {val_acc:.4f}")
-            
+
             if val_acc > best_accuracy:
                 best_accuracy = val_acc
                 best_params = current_params
                 best_model = model
-        
+
         self.best_val_acc = best_accuracy
         self.best_model = best_model
-        
+
         print(f"Best validation accuracy: {self.best_val_acc:.4f}")
         print(f"Best Hyperparameters: {best_params}")
-        
+
         return best_model
 
 
@@ -363,7 +396,7 @@ class XGBoostEvaluator:
         plt.show()
 
         return test_accuracy
-    
+
 class MLP(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, num_classes, num_hidden_layers):
         super(MLP, self).__init__()
@@ -534,7 +567,7 @@ def build_parameters():
   graph_evaluator = {
               'epochs': 200,
               }
-  
+
   xgboost_trainer = {
               'hyperparameters': {
                   'learning_rate': [0.1],
@@ -551,7 +584,7 @@ def build_parameters():
                   'early_stopping_rounds': 10,
               }
           }
-  
+
   mlp_trainer = {
         'architecture': {
             'hidden_dim': [16, 32],
@@ -594,12 +627,13 @@ def main():
         print("--------------------------------")
         pipeline_registry[dataset_name]['data_loader'] = DataLoader(parameters=parameters, dataset=dataset)
         pipeline_registry[dataset_name]['data_processor'] = DataProcessor(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
-        pipeline_registry[dataset_name]['graph'] = Graph(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
+        # pipeline_registry[dataset_name]['graph'] = Graph(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
+        pipeline_registry[dataset_name]['graph'] = CategoricalFeatureGraph(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
         pipeline_registry[dataset_name]['graph_trainer'] = GraphTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
         pipeline_registry[dataset_name]['graph_evaluator'] = GraphEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
-        pipeline_registry[dataset_name]['xgboost_trainer'] = XGBoostTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
-        pipeline_registry[dataset_name]['xgboost_evaluator'] = XGBoostEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
-        pipeline_registry[dataset_name]['mlp_trainer'] = MLPTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
-        pipeline_registry[dataset_name]['mlp_evaluator'] = MLPEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        # pipeline_registry[dataset_name]['xgboost_trainer'] = XGBoostTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        # pipeline_registry[dataset_name]['xgboost_evaluator'] = XGBoostEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        # pipeline_registry[dataset_name]['mlp_trainer'] = MLPTrainer(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
+        # pipeline_registry[dataset_name]['mlp_evaluator'] = MLPEvaluator(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name).run()
 
 main()
