@@ -115,6 +115,7 @@ class GNNModel:
         self.results = {
             'f1_scores': [],
             'accuracy_scores': [],
+            'best_hyperparameters': []
         }
 
         self.run_model()
@@ -123,24 +124,30 @@ class GNNModel:
         kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.parameters['random_seed'])
         final_f1_scores = []
         final_accuracy_scores = []
+        final_hyperparameters = []
 
         for fold_idx, (train_idx, test_idx) in enumerate(kfold.split(self.graph_data.x.cpu(), self.graph_data.y.cpu())):
             print(f"\nRunning fold {fold_idx + 1}/10...")
-
             train_mask, test_mask = self.create_masks(len(self.graph_data.x), train_idx, test_idx)
-
-            model = self.build_gnn_model()
-            optimizer = torch.optim.Adam(model.parameters(), lr=self.parameters['gnn_model']['lr_grid'][0], weight_decay=5e-4)
 
             best_model_state = None
             best_val_f1 = -float('inf')
-            for epoch in range(self.parameters['gnn_model']['epochs']):
-                model.train()
-                optimizer.zero_grad()
-                out = model(self.graph_data.x, self.graph_data.edge_index)
-                loss = F.cross_entropy(out[train_mask], self.graph_data.y[train_mask])
-                loss.backward()
-                optimizer.step()
+            best_params = None
+
+            # Hyperparameter grid search
+            param_grid = self.get_param_grid()
+            for params in param_grid:
+                hidden_dim, lr = params['hidden_dim'], params['lr']
+                model = self.build_gnn_model(hidden_dim)
+                optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=5e-4)
+
+                for epoch in range(self.parameters['gnn_model']['epochs']):
+                    model.train()
+                    optimizer.zero_grad()
+                    out = model(self.graph_data.x, self.graph_data.edge_index)
+                    loss = F.cross_entropy(out[train_mask], self.graph_data.y[train_mask])
+                    loss.backward()
+                    optimizer.step()
 
                 model.eval()
                 with torch.no_grad():
@@ -151,9 +158,13 @@ class GNNModel:
                     if val_f1 > best_val_f1:
                         best_val_f1 = val_f1
                         best_model_state = model.state_dict()
+                        best_params = params
 
             print(f"Fold {fold_idx + 1} - Best Validation F1: {best_val_f1:.4f}")
+            print(f"Fold {fold_idx + 1} - Best Hyperparameters: {best_params}")
 
+            # Retrain on best model and test
+            model = self.build_gnn_model(best_params['hidden_dim'])
             model.load_state_dict(best_model_state)
             model.eval()
             with torch.no_grad():
@@ -161,19 +172,40 @@ class GNNModel:
                 test_preds = test_out[test_mask].argmax(dim=1)
                 test_f1 = f1_score(self.graph_data.y[test_mask].cpu(), test_preds.cpu(), average='weighted')
                 test_accuracy = accuracy_score(self.graph_data.y[test_mask].cpu(), test_preds.cpu())
-                print(f"Fold {fold_idx + 1} - Test F1: {test_f1:.4f}, Test Accuracy: {test_accuracy:.4f}")
 
                 final_f1_scores.append(test_f1)
                 final_accuracy_scores.append(test_accuracy)
+                final_hyperparameters.append(best_params)
+
+                print(f"Fold {fold_idx + 1} - Test F1: {test_f1:.4f}, Test Accuracy: {test_accuracy:.4f}")
 
         self.results['f1_scores'] = final_f1_scores
         self.results['accuracy_scores'] = final_accuracy_scores
+        self.results['best_hyperparameters'] = final_hyperparameters
 
         print("\nFinal Results:")
         print(f"F1 Score - Mean: {np.mean(final_f1_scores):.4f}, Std: {np.std(final_f1_scores):.4f}")
         print(f"Accuracy - Mean: {np.mean(final_accuracy_scores):.4f}, Std: {np.std(final_accuracy_scores):.4f}")
 
-    def build_gnn_model(self):
+        print("\nBest Hyperparameters for Each Fold:")
+        for i, params in enumerate(final_hyperparameters, start=1):
+            print(f"Fold {i}: {params}")
+
+        # Determine most frequently selected hyperparameters
+        most_common_params = max(set(tuple(d.items()) for d in final_hyperparameters), 
+                                 key=lambda x: final_hyperparameters.count(dict(x)))
+        print(f"\nMost Frequently Selected Hyperparameters: {dict(most_common_params)}")
+
+    def get_param_grid(self):
+        lr_grid = self.parameters['gnn_model']['lr_grid']
+        hidden_dim_grid = self.parameters['gnn_model']['hidden_dim_grid']
+
+        param_grid = []
+        for lr, hidden_dim in itertools.product(lr_grid, hidden_dim_grid):
+            param_grid.append({'lr': lr, 'hidden_dim': hidden_dim})
+        return param_grid
+
+    def build_gnn_model(self, hidden_dim):
         class GCN(torch.nn.Module):
             def __init__(self, num_features, hidden_dim, num_classes):
                 super(GCN, self).__init__()
@@ -187,7 +219,6 @@ class GNNModel:
                 x = self.conv2(x, edge_index)
                 return x
 
-        hidden_dim = self.parameters['gnn_model']['hidden_dim_grid'][0]
         return GCN(self.num_features, hidden_dim, self.num_classes).to(self.device)
 
     def create_masks(self, num_nodes, train_idx, test_idx):
