@@ -109,7 +109,8 @@ class XGBoostModel:
 
         self.results = {
             'f1_scores': [],
-            'accuracy_scores': []
+            'accuracy_scores': [],
+            'best_hyperparameters': []
         }
 
         self.run_model()
@@ -118,6 +119,7 @@ class XGBoostModel:
         kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.parameters['random_seed'])
         final_f1_scores = []
         final_accuracy_scores = []
+        final_hyperparameters = []
 
         for fold_idx, (train_val_idx, test_idx) in enumerate(kfold.split(self.X, self.y)):
             print(f"\nRunning fold {fold_idx + 1}/10...")
@@ -125,12 +127,16 @@ class XGBoostModel:
             y_train_val, y_test = self.y.iloc[train_val_idx], self.y.iloc[test_idx]
             X_train, X_val, y_train, y_val = train_test_split(
                 X_train_val, y_train_val, test_size=0.1, random_state=self.parameters['random_seed'], stratify=y_train_val)
+
             best_model = None
             best_score = -float('inf')
+            best_params = None
             param_grid = self.get_param_grid()
 
             for params in param_grid:
-                model = xgb.XGBClassifier(**params, objective='multi:softmax', num_class=self.pipeline_registry[self.dataset_name]['data_processor'].num_classes, eval_metric='mlogloss')
+                model = xgb.XGBClassifier(**params, objective='multi:softmax', 
+                                          num_class=self.pipeline_registry[self.dataset_name]['data_processor'].num_classes, 
+                                          eval_metric='mlogloss')
                 model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
                 val_preds = model.predict(X_val)
                 val_score = f1_score(y_val, val_preds, average='weighted')
@@ -138,8 +144,10 @@ class XGBoostModel:
                 if val_score > best_score:
                     best_score = val_score
                     best_model = model
+                    best_params = params
 
             print(f"Best validation F1 score for fold {fold_idx + 1}: {best_score:.4f}")
+            print(f"Best hyperparameters for fold {fold_idx + 1}: {best_params}")
 
             fold_f1_scores = []
             fold_accuracy_scores = []
@@ -157,16 +165,25 @@ class XGBoostModel:
 
             final_f1_scores.append(avg_f1)
             final_accuracy_scores.append(avg_accuracy)
+            final_hyperparameters.append(best_params)
 
         self.results['f1_scores'] = final_f1_scores
         self.results['accuracy_scores'] = final_accuracy_scores
+        self.results['best_hyperparameters'] = final_hyperparameters
 
         print("\nFinal Results:")
         print(f"F1 Score - Mean: {np.mean(final_f1_scores):.4f}, Std: {np.std(final_f1_scores):.4f}")
         print(f"Accuracy - Mean: {np.mean(final_accuracy_scores):.4f}, Std: {np.std(final_accuracy_scores):.4f}")
 
+        print("\nBest Hyperparameters for Each Fold:")
+        for i, params in enumerate(final_hyperparameters, start=1):
+            print(f"Fold {i}: {params}")
+
+        most_common_params = max(set(tuple(d.items()) for d in final_hyperparameters), 
+                                 key=lambda x: final_hyperparameters.count(dict(x)))
+        print(f"\nMost Frequently Selected Hyperparameters: {dict(most_common_params)}")
+
     def get_param_grid(self):
-        """Generates a grid of hyperparameters."""
         learning_rates = self.parameters['xgboost_model']['learning_rate']
         max_depths = self.parameters['xgboost_model']['max_depth']
         n_estimators_list = self.parameters['xgboost_model']['n_estimators']
