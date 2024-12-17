@@ -83,19 +83,6 @@ class DataProcessor():
     y_encoded = pd.DataFrame(encoder.fit_transform(self.y.values.ravel()), columns=['target'])
     return y_encoded
 
-class KnnGraph():
-  def __init__(self, parameters, pipeline_registry, dataset_name):
-    self.parameters = parameters
-    self.pipeline_registry = pipeline_registry
-    self.device = parameters['device']
-
-    self.adj_matrix = kneighbors_graph(pipeline_registry[dataset_name]['data_processor'].X_numeric_scaled,
-                                       n_neighbors=parameters['knn_graph']['k'],
-                                       mode='connectivity',
-                                       include_self=False)
-    self.G = nx.from_scipy_sparse_array(self.adj_matrix)
-    self.graph_data = from_networkx(self.G).to(self.device)
-
 class XGBoostModel:
     def __init__(self, parameters, pipeline_registry, dataset_name):
         self.parameters = parameters
@@ -204,10 +191,6 @@ def build_parameters():
               },
             ]
 
-  knn_graph = {
-     						'k': 5,
-              }
-
   xgboost_model = {
      								'learning_rate': [0.1],
 										'max_depth': [5, 7],
@@ -219,7 +202,6 @@ def build_parameters():
           'device': device,
           'random_seed': random_seed,
           'datasets': datasets,
-          'knn_graph': knn_graph,
           'xgboost_model': xgboost_model,
           }
 
@@ -241,7 +223,6 @@ def main():
         print("--------------------------------")
         pipeline_registry[dataset_name]['data_loader'] = DataLoader(parameters=parameters, dataset=dataset)
         pipeline_registry[dataset_name]['data_processor'] = DataProcessor(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
-        pipeline_registry[dataset_name]['knn_graph'] = KnnGraph(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
         pipeline_registry[dataset_name]['xgboost_model'] = XGBoostModel(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
         
 main()
