@@ -118,6 +118,7 @@ class GNNModel():
 
         self.data_processor = pipeline_registry[dataset_name]['data_processor']
         self.knn_graph = pipeline_registry[dataset_name]['knn_graph']
+        self.data_splitter = pipeline_registry[dataset_name]['data_splitter']
 
         self.graph_data = self.knn_graph.graph_data
         self.num_features = self.data_processor.X_prepared.shape[1]
@@ -132,7 +133,7 @@ class GNNModel():
         self.run_model()
 
     def run_model(self):
-        kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.parameters['random_seed'])
+        kfold = self.data_splitter.kfold
         final_f1_scores = []
         final_accuracy_scores = []
         final_hyperparameters = []
@@ -145,7 +146,6 @@ class GNNModel():
             best_val_f1 = -float('inf')
             best_params = None
 
-            # Hyperparameter grid search
             param_grid = self.get_param_grid()
             for params in param_grid:
                 hidden_dim, lr = params['hidden_dim'], params['lr']
@@ -174,7 +174,6 @@ class GNNModel():
             print(f"Fold {fold_idx + 1} - Best Validation F1: {best_val_f1:.4f}")
             print(f"Fold {fold_idx + 1} - Best Hyperparameters: {best_params}")
 
-            # Retrain on best model and test
             model = self.build_gnn_model(best_params['hidden_dim'])
             model.load_state_dict(best_model_state)
             model.eval()
@@ -202,7 +201,6 @@ class GNNModel():
         for i, params in enumerate(final_hyperparameters, start=1):
             print(f"Fold {i}: {params}")
 
-        # Determine most frequently selected hyperparameters
         most_common_params = max(set(tuple(d.items()) for d in final_hyperparameters), 
                                  key=lambda x: final_hyperparameters.count(dict(x)))
         print(f"\nMost Frequently Selected Hyperparameters: {dict(most_common_params)}")
