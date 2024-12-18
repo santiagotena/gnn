@@ -82,6 +82,17 @@ class DataProcessor():
     encoder = LabelEncoder()
     y_encoded = pd.DataFrame(encoder.fit_transform(self.y.values.ravel()), columns=['target'])
     return y_encoded
+  
+class DataSplitter:
+    def __init__(self, random_seed):
+        self.random_seed = random_seed
+        self.kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=random_seed)
+
+    def split(self, X, y):
+        return self.kfold.split(X, y)
+
+    def train_test_split(self, X, y, test_size=0.1, stratify=None):
+        return train_test_split(X, y, test_size=test_size, random_state=self.random_seed, stratify=stratify)
 
 class MLP(torch.nn.Module):
     def __init__(self, input_dim, hidden_dim, num_hidden_layers, output_dim):
