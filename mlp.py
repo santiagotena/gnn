@@ -120,6 +120,8 @@ class MLPModel():
         self.y = pipeline_registry[dataset_name]['data_processor'].y_tensor
         self.num_classes = pipeline_registry[dataset_name]['data_processor'].num_classes
 
+        self.data_splitter = pipeline_registry[dataset_name]['data_splitter']
+
         self.results = {
             'f1_scores': [],
             'accuracy_scores': [],
@@ -129,17 +131,16 @@ class MLPModel():
         self.run_model()
 
     def run_model(self):
-        kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.parameters['random_seed'])
+        kfold = self.data_splitter.kfold
         final_f1_scores = []
         final_accuracy_scores = []
         final_hyperparameters = []
 
         for fold_idx, (train_val_idx, test_idx) in enumerate(kfold.split(self.X.cpu(), self.y.cpu())):
             print(f"\nRunning fold {fold_idx + 1}/10...")
+            
             X_train_val, X_test = self.X[train_val_idx], self.X[test_idx]
             y_train_val, y_test = self.y[train_val_idx], self.y[test_idx]
-            train_val_data = (X_train_val, y_train_val)
-            test_data = (X_test, y_test)
 
             best_model = None
             best_score = -float('inf')
@@ -159,10 +160,10 @@ class MLPModel():
                 )
                 criterion = torch.nn.CrossEntropyLoss()
 
-                self.train_model(model, train_val_data, params['epochs'], optimizer, criterion)
+                self.train_model(model, (X_train_val, y_train_val), params['epochs'], optimizer, criterion)
 
-                val_preds = self.predict(model, train_val_data[0])
-                val_score = f1_score(train_val_data[1].cpu(), val_preds.cpu(), average='weighted')
+                val_preds = self.predict(model, X_train_val)
+                val_score = f1_score(y_train_val.cpu(), val_preds.cpu(), average='weighted')
 
                 if val_score > best_score:
                     best_score = val_score
@@ -176,7 +177,7 @@ class MLPModel():
             fold_accuracy_scores = []
             for retrain_run in range(3):
                 print(f"Retraining best model (run {retrain_run + 1}/3)...")
-                self.train_model(best_model, (self.X[train_val_idx], self.y[train_val_idx]),
+                self.train_model(best_model, (X_train_val, y_train_val),
                                  best_params['epochs'], optimizer, criterion)
 
                 test_preds = self.predict(best_model, X_test)
