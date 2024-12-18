@@ -83,10 +83,10 @@ class DataProcessor():
     y_encoded = pd.DataFrame(encoder.fit_transform(self.y.values.ravel()), columns=['target'])
     return y_encoded
   
-class DataSplitter:
-    def __init__(self, random_seed):
-        self.random_seed = random_seed
-        self.kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=random_seed)
+class DataSplitter():
+    def __init__(self, parameters):
+        self.random_seed = parameters['random_seed']
+        self.kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.random_seed)
 
     def split(self, X, y):
         return self.kfold.split(X, y)
@@ -110,7 +110,7 @@ class MLP(torch.nn.Module):
     def forward(self, x):
         return self.network(x)
 
-class MLPModel:
+class MLPModel():
     def __init__(self, parameters, pipeline_registry, dataset_name):
         self.parameters = parameters
         self.pipeline_registry = pipeline_registry
@@ -287,6 +287,7 @@ def main():
         print("--------------------------------")
         pipeline_registry[dataset_name]['data_loader'] = DataLoader(parameters=parameters, dataset=dataset)
         pipeline_registry[dataset_name]['data_processor'] = DataProcessor(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
+        pipeline_registry[dataset_name]['data_splitter'] = DataSplitter(parameters=parameters)
         pipeline_registry[dataset_name]['mlp_model'] = MLPModel(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
         
 main()
