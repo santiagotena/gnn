@@ -83,10 +83,10 @@ class DataProcessor():
     y_encoded = pd.DataFrame(encoder.fit_transform(self.y.values.ravel()), columns=['target'])
     return y_encoded
 
-class DataSplitter:
-    def __init__(self, random_seed):
-        self.random_seed = random_seed
-        self.kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=random_seed)
+class DataSplitter():
+    def __init__(self, parameters):
+        self.random_seed = parameters['random_seed']
+        self.kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.random_seed)
 
     def split(self, X, y):
         return self.kfold.split(X, y)
@@ -94,7 +94,7 @@ class DataSplitter:
     def train_test_split(self, X, y, test_size=0.1, stratify=None):
         return train_test_split(X, y, test_size=test_size, random_state=self.random_seed, stratify=stratify)
 
-class XGBoostModel:
+class XGBoostModel():
     def __init__(self, parameters, pipeline_registry, dataset_name):
         self.parameters = parameters
         self.pipeline_registry = pipeline_registry
@@ -102,8 +102,7 @@ class XGBoostModel:
         self.device = parameters['device']
         self.X = pipeline_registry[dataset_name]['data_processor'].X_prepared
         self.y = pipeline_registry[dataset_name]['data_processor'].y_encoded['target']
-        self.x_tensor = pipeline_registry[dataset_name]['data_processor'].x_tensor
-        self.y_tensor = pipeline_registry[dataset_name]['data_processor'].y_tensor
+        self.data_splitter = pipeline_registry[dataset_name]['data_splitter']
 
         self.results = {
             'f1_scores': [],
@@ -114,17 +113,17 @@ class XGBoostModel:
         self.run_model()
 
     def run_model(self):
-        kfold = StratifiedKFold(n_splits=10, shuffle=True, random_state=self.parameters['random_seed'])
         final_f1_scores = []
         final_accuracy_scores = []
         final_hyperparameters = []
 
-        for fold_idx, (train_val_idx, test_idx) in enumerate(kfold.split(self.X, self.y)):
+        for fold_idx, (train_val_idx, test_idx) in enumerate(self.data_splitter.split(self.X, self.y)):
             print(f"\nRunning fold {fold_idx + 1}/10...")
             X_train_val, X_test = self.X.iloc[train_val_idx], self.X.iloc[test_idx]
             y_train_val, y_test = self.y.iloc[train_val_idx], self.y.iloc[test_idx]
-            X_train, X_val, y_train, y_val = train_test_split(
-                X_train_val, y_train_val, test_size=0.1, random_state=self.parameters['random_seed'], stratify=y_train_val)
+            X_train, X_val, y_train, y_val = self.data_splitter.train_test_split(
+                X_train_val, y_train_val, test_size=0.1, stratify=y_train_val
+            )
 
             best_model = None
             best_score = -float('inf')
@@ -157,6 +156,7 @@ class XGBoostModel:
                 test_accuracy = accuracy_score(y_test, test_preds)
                 fold_f1_scores.append(test_f1)
                 fold_accuracy_scores.append(test_accuracy)
+
             avg_f1 = np.mean(fold_f1_scores)
             avg_accuracy = np.mean(fold_accuracy_scores)
             print(f"Fold {fold_idx + 1} - Avg F1: {avg_f1:.4f}, Avg Accuracy: {avg_accuracy:.4f}")
@@ -164,7 +164,6 @@ class XGBoostModel:
             final_f1_scores.append(avg_f1)
             final_accuracy_scores.append(avg_accuracy)
             final_hyperparameters.append(best_params)
-
         self.results['f1_scores'] = final_f1_scores
         self.results['accuracy_scores'] = final_accuracy_scores
         self.results['best_hyperparameters'] = final_hyperparameters
@@ -234,6 +233,7 @@ def main():
         print("--------------------------------")
         pipeline_registry[dataset_name]['data_loader'] = DataLoader(parameters=parameters, dataset=dataset)
         pipeline_registry[dataset_name]['data_processor'] = DataProcessor(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
+        pipeline_registry[dataset_name]['data_splitter'] = DataSplitter(parameters=parameters)
         pipeline_registry[dataset_name]['xgboost_model'] = XGBoostModel(parameters=parameters, pipeline_registry=pipeline_registry, dataset_name=dataset_name)
         
 main()
